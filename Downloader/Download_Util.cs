@@ -126,7 +126,7 @@ namespace Downloader
                     {
                         Console.WriteLine("下载线程" + i + "启动");
                         //await Task.Delay(1000);
-                        tasks.Add(Task.Run(async () =>
+                        tasks.Add(Task.Run(async () => 
                         {
                             await FileDownloadAsync(downloadUrl, begin, begin + rangeSize, i);
                         }, source.Token));
