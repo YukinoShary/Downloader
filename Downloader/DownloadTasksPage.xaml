@@ -1,0 +1,16 @@
+﻿<Page x:Class="Downloader.DownloadTasksPage"
+      xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
+      xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
+      xmlns:local="clr-namespace:Downloader"
+      mc:Ignorable="d" 
+      d:DesignHeight="450" d:DesignWidth="400"
+      Title="DownloadTasksPage">
+
+    <Grid>
+        <ListView Name="taskList">
+        </ListView>
+        <Button Height="30" VerticalAlignment="Bottom" Content="建立新任务" FontSize="16" Name="add" Click="Add_Click" Background="#FF3591D8" BorderBrush="#00707070" Foreground="White"/>
+    </Grid>
+</Page>
