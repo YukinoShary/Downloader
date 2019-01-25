@@ -42,7 +42,7 @@
                     </LinearGradientBrush>
                 </ComboBox.Background>
             </ComboBox>
-            <Button Name="confirm" Content="确认" Margin="50,20,0,0" Width="50" HorizontalAlignment="Left" Height="30" Click="Confirm_Click" Background="#FF3591D8" BorderBrush="#00707070" Foreground="White"/>
+            <Button Name="confirm" Content="确认" Margin="30" Width="50" HorizontalAlignment="Right" VerticalAlignment="Bottom" Height="30" Click="Confirm_Click" Background="#FF3591D8" BorderBrush="#00707070" Foreground="White"/>
         </StackPanel>
     </Grid>
 </Page>

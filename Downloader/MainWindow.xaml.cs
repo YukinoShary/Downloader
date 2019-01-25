@@ -27,27 +27,32 @@ namespace Downloader
             mw = this;
             Conf.getConf();
             FileOperating_Util.path = Conf.config.storagePath;
-            TaskInfo.getTaskInfo();            
+            TaskInfo.getTaskInfo();
             DownloadTasksPage.dtp = new DownloadTasksPage();
+            this.Loaded += MainWindow_Loaded;
+        }
+
+        private void MainWindow_Loaded(object sender, RoutedEventArgs e)
+        {
+            Navigate(DownloadTasksPage.dtp);
         }
 
         private void Button_Click(object sender, RoutedEventArgs e)
         {
-            ControlTemplate template = mainwindow.FindName("controlTemplate") as ControlTemplate;
-            if(template!=null)
-            {
-                Frame f = template.FindName("main",mainwindow) as Frame;
-                f.Navigate(new settingPage());
-            }
+            Navigate(new settingPage());
         }
 
         private void Button_Click_1(object sender, RoutedEventArgs e)
         {
-            ControlTemplate template = mainwindow.FindName("controlTemplate") as ControlTemplate;
-            if (template != null)
-            {
+            Navigate(DownloadTasksPage.dtp);
+        }
+
+        private void Navigate(object dtp)
+        {
+            var template = mainwindow.FindName("controlTemplate") as ControlTemplate;
+            if (template != null) {
                 Frame f = template.FindName("main", mainwindow) as Frame;
-                f.Navigate(DownloadTasksPage.dtp);
+                f.Navigate(dtp);
             }
         }
 

@@ -28,8 +28,8 @@
                             <RowDefinition Height="50"/>
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
-                        <Button Name="butt" Content="下载" Margin="0,0,0,0" Width="50" Grid.Column="0" Grid.Row="0" Background="#FF3591D8" Foreground="White" BorderBrush="#00707070" Click="Button_Click_1"/>
-                        <Button Content="设置" Margin="0,0,0,0" Width="50" Grid.Column="1" Grid.Row="0" Background="#FF3591D8" Foreground="White" BorderBrush="#00707070" Click="Button_Click"/>
+                        <Button Name="butt" Content="下载" Margin="0,0,0,0" Grid.Column="0" Grid.Row="0" Background="#FF3591D8" Foreground="White" BorderBrush="#00707070" Click="Button_Click_1"/>
+                        <Button Content="设置" Margin="0,0,0,0" Grid.Column="1" Grid.Row="0" Background="#FF3591D8" Foreground="White" BorderBrush="#00707070" Click="Button_Click"/>
                         <Frame Grid.ColumnSpan="2" Grid.Column="0" Grid.Row="1" x:Name="main" NavigationUIVisibility="Hidden"/>
                     </Grid>
                 </Grid>

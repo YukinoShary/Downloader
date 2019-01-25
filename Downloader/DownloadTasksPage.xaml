@@ -11,6 +11,6 @@
     <Grid>
         <ListView Name="taskList">
         </ListView>
-        <Button Height="30" VerticalAlignment="Bottom" Content="建立新任务" FontSize="16" Name="add" Click="Add_Click" Background="#FF3591D8" BorderBrush="#00707070" Foreground="White"/>
+        <Button Height="36" VerticalAlignment="Bottom" Content="建立新任务" Name="add" Click="Add_Click" Background="#FF3591D8" BorderBrush="#00707070" Foreground="White"/>
     </Grid>
 </Page>
