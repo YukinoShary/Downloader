@@ -17,7 +17,7 @@ namespace Downloader
     public class Download_Util
     {
         private Uri downloadUrl;
-        private long blockSize;
+        public long blockSize;//单元测试时设置为public，实际需要设置private
         private int thread;//获取配置文件中的最大线程数
         private long cacheSize;//获取配置文件中缓冲大小
         //设置请求头部分信息
@@ -27,8 +27,8 @@ namespace Downloader
         private string fileName;
         private long fileSize;     
         private long totalRange;       
-        private long rangeSize;
-        private long[] cutPosition;//记录不同块分段位置
+        public long rangeSize;//单元测试时设置为public，实际需要设置private
+        public long[] cutPosition;//记录不同块分段位置  //单元测试时设置为public，实际需要设置private
         private long current = 0;//实际总进度
         private long speed;
         private DispatcherTimer timer;
@@ -107,52 +107,69 @@ namespace Downloader
             }
             totalRange = (blockSize / rangeSize + (blockSize % rangeSize > 0 ? 1 : 0)) * thread;//计算总range数()
 
-            FileOperating_Util.CreateFile(fileName, fileSize, totalRange);//分配下载空间
-
-            //下载计时器开始运行
-            timer = new DispatcherTimer();
-            timer.Interval = TimeSpan.FromSeconds(1);
-            timer.Tick += Timer_Tick;
-            timer.Start(); 
-
-            //Allocate buffer and the range of task to every thread 
+            /*Allocate buffer and the range of task to every thread*/ 
             try
             {
-                source = new CancellationTokenSource();//初始化取消源
-                if (blockSize > 1)
+                HttpResponseMessage response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
+                if (response.StatusCode == HttpStatusCode.PartialContent)//判断是否支持分段下载
                 {
-                    long begin = 0;
-                    for (int i = 0; i <= thread - 1; i++)
+                    FileOperating_Util.CreateFile(fileName, fileSize, totalRange);//分配下载空间
+
+                    //下载计时器开始运行
+                    timer = new DispatcherTimer();
+                    timer.Interval = TimeSpan.FromSeconds(1);
+                    timer.Tick += Timer_Tick;
+                    timer.Start();
+
+                    source = new CancellationTokenSource();//初始化取消源
+                    if (blockSize > 1)
                     {
-                        Console.WriteLine("下载线程" + i + "启动");
-                        //await Task.Delay(1000);
-                        tasks.Add(Task.Run(async () => 
+                        long begin = 0;
+                        for (int i = 0; i <= thread - 1; i++)
                         {
-                            await FileDownloadAsync(downloadUrl, begin, begin + rangeSize, i);
-                        }, source.Token));
-                        begin += blockSize;
+                            Console.WriteLine("下载线程" + i + "启动");
+                            //await Task.Delay(1000);
+                            tasks.Add(Task.Run(async () =>
+                            {
+                                await FileDownloadAsync(begin, begin + rangeSize, i);
+                            }, source.Token));
+                            begin += blockSize;
+                        }
                     }
                 }
+                else if (response.StatusCode.Equals(200))
+                {
+                    //单线程下载
+                    MainWindow.mw.Dispatcher.Invoke(() => { MessageBox.Show(response.StatusCode.ToString() + "服务器不支持断点续传，将进行单线程下载"); });
+                    /*重新分配文件信息*/
+                    totalRange = 1;
+                    rangeSize = fileSize;
+                    cutPosition = new long[1];
+                    cutPosition[0] = fileSize - 1;
+                    FileOperating_Util.CreateFile(fileName, fileSize, totalRange);
 
+                    tasks.Add(Task.Run(async () => {await SingleThreadDownload(); },source.Token));
+                }
+                else
+                    throw new HttpRequestException(response.ReasonPhrase);
             }
             catch(Exception e)
             {
-                if(e.Message.Equals("Nonsupport PartialCont"))
+                MainWindow.mw.Dispatcher.Invoke(() =>
                 {
-                    //单线程下载
-                }
+                    MessageBox.Show(e.Message);
+                });
             }
         }
 
         /// <summary>
-        /// 文件下载
+        /// 文件多线程下载
         /// </summary>
-        /// <param name="url">下载链接</param>
         /// <param name="firstPosition">下载(块)起始位置</param>
         /// <param name="lastPosition">下载(块)结束位置</param>
         /// <param name="taskNum">线程编号</param>
         /// <returns></returns>
-        public async Task FileDownloadAsync(Uri url,long firstPosition,long lastPosition,int taskNum)
+        public async Task FileDownloadAsync(long firstPosition, long lastPosition, int taskNum)//单元测试时设置为public，实际需要设置private
         {
             HttpClient client = new HttpClient();
             string range = "";
@@ -170,36 +187,41 @@ namespace Downloader
             client.DefaultRequestHeaders.Add("User-Agent", @UserAgent);
             client.DefaultRequestHeaders.Add("Range", range);
 
-            HttpResponseMessage response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
-            if (response.StatusCode == HttpStatusCode.PartialContent)//判断是否支持分段下载
+            Stream stream = await client.GetStreamAsync(downloadUrl);
+
+            long rangeNum = (firstPosition + blockSize - cutPosition[taskNum]) / rangeSize - 1
+                + ((firstPosition + blockSize - cutPosition[taskNum]) % rangeSize > 0 ? 1 : 0)
+                + totalRange / thread * taskNum;
+            //rangeNum的计算为（定位该range在该block中的位置，即初始位置加上blockSize再减去该块末分段位置）
+            //除以每个进度块大小,最后加上之前的range数量
+
+            //缓存写入硬盘
+            await Task.Run(() => { FileOperating_Util.SaveFile(fileName, stream, firstPosition, rangeNum); });
+
+            //当线程任务未超过block范围，继续下一个Range任务
+            if (firstPosition + rangeSize < cutPosition[taskNum])
             {
-                Stream stream = await client.GetStreamAsync(url);
-                
-                long rangeNum= (firstPosition + blockSize - cutPosition[taskNum]) / rangeSize - 1
-                    + ((firstPosition + blockSize - cutPosition[taskNum]) % rangeSize > 0 ? 1 : 0)
-                    + totalRange / thread * taskNum;
-                //rangeNum的计算为（定位该range在该block中的位置，即初始位置加上blockSize再减去该块末分段位置）
-                //除以每个进度块大小,最后加上之前的range数量
-
-                //缓存写入硬盘
-                Task.Run(async () => { FileOperating_Util.SaveFile(fileName, stream, firstPosition, rangeNum); });
-
-                //当线程任务未超过block范围，继续下一个Range任务
-                if (firstPosition + rangeSize < cutPosition[taskNum])
-                {
-                    await FileDownloadAsync(url, lastPosition + 1, lastPosition + rangeSize, taskNum);
-                }
-                else if (lastPosition < taskNum)//末尾有余留内容时
-                {
-                    await FileDownloadAsync(url, lastPosition + 1, cutPosition[taskNum], taskNum);
-                }
-                else
-                    return;
+                await FileDownloadAsync(lastPosition + 1, lastPosition + rangeSize, taskNum);
+            }
+            else if (lastPosition < taskNum)//末尾有余留内容时
+            {
+                await FileDownloadAsync(lastPosition + 1, cutPosition[taskNum], taskNum);
             }
             else 
             {
-                MainWindow.mw.Dispatcher.Invoke(() => { MessageBox.Show(response.StatusCode.ToString() + response.ReasonPhrase.ToString()); });
+                return;
             }
+        }
+
+        /// <summary>
+        /// 单线程下载任务
+        /// </summary>
+        /// <returns></returns>
+        public async Task SingleThreadDownload()
+        {
+            HttpClient client = new HttpClient();
+            Stream stream = await client.GetStreamAsync(downloadUrl);
+            await Task.Run(() => { FileOperating_Util.SaveFile(fileName, stream, 0, fileSize - 1); });
         }
 
         /// <summary>
@@ -234,7 +256,7 @@ namespace Downloader
                 {
                     tasks.Add(Task.Run(async () =>
                     {
-                        await FileDownloadAsync(downloadUrl, i * rangeSize + scanner[i], i * scanner[i] + rangeSize, taskcount);//非末尾range
+                        await FileDownloadAsync(i * rangeSize + scanner[i], i * scanner[i] + rangeSize, taskcount);//非末尾range
                     }, source.Token));
                     taskcount += 1;
                     i = (int)totalRange / thread * taskcount - 1;//直接跳转到下一个block开始位置
@@ -245,7 +267,7 @@ namespace Downloader
                     {
                         tasks.Add(Task.Run(async () =>
                         {
-                            await FileDownloadAsync(downloadUrl, i * rangeSize + scanner[i], cutPosition[taskcount], taskcount);//末尾range
+                            await FileDownloadAsync(i * rangeSize + scanner[i], cutPosition[taskcount], taskcount);//末尾range
                         }, source.Token));
                         taskcount += 1;
                         i = (int)totalRange / thread * taskcount - 1;
