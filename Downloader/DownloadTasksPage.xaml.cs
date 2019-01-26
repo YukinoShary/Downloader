@@ -164,8 +164,9 @@ namespace Downloader
             var path = System.IO.Path.Combine(Conf.config.storagePath, filename);
             tasks.Add(filename, new FileDownloader() { SourceUri = new Uri(url), DestFilePath = filename });
             tasks[filename].Start();
-            NewTaskItem(filename);
-            dataBinding[filename + "pause_continue"] = "||";
+            // TODO
+            //NewTaskItem(filename);
+            //dataBinding[filename + "pause_continue"] = "||";
         }
 
         /// <summary>

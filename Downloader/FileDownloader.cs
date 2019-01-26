@@ -19,6 +19,7 @@ namespace Downloader
         public Uri SourceUri;
         public string DestFilePath;
         public HttpClient HttpClient = new HttpClient();
+        public CancellationToken CancellationToken;
 
         // Status:
         public Worker MainWorker;
@@ -42,34 +43,28 @@ namespace Downloader
             {
                 MainWorker = new Worker(this);
                 var resp = await MainWorker.Request(new HttpRequestMessage(HttpMethod.Get, SourceUri));
+                CancellationToken.ThrowIfCancellationRequested();
                 resp.EnsureSuccessStatusCode();
                 RangeSupported = resp.Headers.AcceptRanges.Contains("bytes");
                 Length = GetLength(resp);
                 State = DownloadState.InitFile;
                 InitFile();
                 InitRanges();
-                for (int i = 0; i < Ranges.Count; i++)
-                {
-                    var range = Ranges[i];
-                    if (i == 0)
-                    {
-                        // keep using the first reponse to download the first range
-                        range.Worker = MainWorker;
-                        range.WorkerTask = range.Worker.DownloadRange(range, resp);
-                    }
-                    else
-                    {
-                        range.Worker = new Worker(this);
-                        range.WorkerTask = range.Worker.DownloadRange(range);
-                    }
-                }
+                // keep using the first reponse to download the first range
+                Range firstRange = Ranges[0];
+                firstRange.Worker = MainWorker;
+                firstRange.WorkerTask = MainWorker.DownloadRange(firstRange, resp);
+                StartWorker();
                 State = DownloadState.Downloading;
                 await Task.WhenAll(Ranges.Select(x => x.WorkerTask));
                 State = DownloadState.Success;
             }
             catch (Exception e)
             {
-                State = DownloadState.Error;
+                if (CancellationToken.IsCancellationRequested)
+                    State = DownloadState.Cancelled;
+                else
+                    State = DownloadState.Error;
                 throw;
             }
             finally
@@ -79,6 +74,21 @@ namespace Downloader
                     DestFile.Dispose();
                     DestFile = null;
                 }
+            }
+        }
+
+        private void StartWorker()
+        {
+            for (int i = 0; i < Ranges.Count; i++)
+            {
+                var range = Ranges[i];
+                if (range.Length != -1 && range.Remaining == 0)
+                    return;
+                // start new worker or restart if failed.
+                if (range.Worker == null)
+                    range.Worker = new Worker(this);
+                if (range.WorkerTask?.IsCompleted != false)
+                    range.WorkerTask = range.Worker.DownloadRange(range);
             }
         }
 
@@ -126,16 +136,24 @@ namespace Downloader
             public long Current;
             public long CurrentWithOffset => Offset + Current;
             public long Remaining => Length - Current;
-            public Task WorkerTask;
-            public CancellationTokenSource CancellationToken;
+            public long End => Offset + Length;
             public Worker Worker;
+            public Task WorkerTask;
+
+            public override string ToString()
+            {
+                return $"{{Range offset={Offset} len={Length} cur={Current} state={Worker?.State} retries={Worker?.Retries}}}";
+            }
         }
 
         public class Worker
         {
             public FileDownloader FileDownloader;
             public DownloadState State;
-            public CancellationToken CancellationToken;
+            public int Retries = 0;
+            public int MaxRetries = 3;
+
+            CancellationToken CancellationToken => FileDownloader.CancellationToken;
             HttpClient HttpClient => FileDownloader.HttpClient;
 
             public Worker(FileDownloader fileDownloader)
@@ -143,44 +161,30 @@ namespace Downloader
                 FileDownloader = fileDownloader;
             }
 
-            public async Task<HttpResponseMessage> Request(HttpRequestMessage httpRequest)
+            public Task<HttpResponseMessage> Request(HttpRequestMessage httpRequest)
             {
                 State = DownloadState.Requesting;
-                try
-                {
-                    return await HttpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, CancellationToken);
-                }
-                catch (Exception)
-                {
-                    State = DownloadState.Error;
-                    throw;
-                }
+                return HttpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, CancellationToken);
             }
 
-            public async Task DownloadRange(FileDownloader.Range range)
+            public async Task DownloadRange(Range range, HttpResponseMessage resp = null)
             {
+            RETRY:
                 try
                 {
-                    var req = new HttpRequestMessage(HttpMethod.Get, FileDownloader.SourceUri);
-                    req.Headers.Range = new RangeHeaderValue(range.CurrentWithOffset, range.Offset + range.Length - 1);
-                    var resp = await Request(req);
-                    CancellationToken.ThrowIfCancellationRequested();
-                    resp.EnsureSuccessStatusCode();
-                    await DownloadRange(range, resp);
-                }
-                catch (Exception e)
-                {
-                    State = DownloadState.Error;
-                }
-            }
+                    if (resp == null) // If there is not a response for this range, do a request to get one.
+                    {
+                        var req = new HttpRequestMessage(HttpMethod.Get, FileDownloader.SourceUri);
+                        req.Headers.Range = new RangeHeaderValue(range.CurrentWithOffset, range.Offset + range.Length - 1);
+                        resp = await Request(req);
+                        CancellationToken.ThrowIfCancellationRequested();
+                        resp.EnsureSuccessStatusCode();
+                    }
 
-            public async Task DownloadRange(FileDownloader.Range range, HttpResponseMessage resp)
-            {
-                try
-                {
                     bool unknownLength = range.Length == -1;
                     using (var stream = await resp.Content.ReadAsStreamAsync())
                     {
+                        State = DownloadState.Downloading;
                         var fs = FileDownloader.DestFile;
                         const int MaxBufLen = 64 * 1024;
                         int bufLen = unknownLength ? MaxBufLen : (int)Math.Min(range.Remaining, MaxBufLen);
@@ -188,7 +192,8 @@ namespace Downloader
                         while (range.Remaining > 0 || unknownLength)
                         {
                             int readLen = unknownLength ? bufLen : (int)Math.Min(range.Remaining, bufLen);
-                            readLen = await stream.ReadAsync(buf, 0, readLen);
+                            readLen = await stream.ReadAsync(buf, 0, readLen, CancellationToken);
+                            CancellationToken.ThrowIfCancellationRequested();
                             if (readLen == 0)
                             {
                                 if (unknownLength)
@@ -207,9 +212,23 @@ namespace Downloader
                     }
                     State = DownloadState.Success;
                 }
-                catch (Exception)
+                catch (Exception e)
                 {
-                    State = DownloadState.Error;
+                    if (CancellationToken.IsCancellationRequested)
+                    {
+                        State = DownloadState.Cancelled;
+                    }
+                    else
+                    {
+                        if (Retries++ < MaxRetries)
+                        {
+                            resp = null;
+                            goto RETRY;
+                            // Yes! It's GOTO, to avoid making a long awaiting chain.
+                        }
+                        State = DownloadState.Error;
+                    }
+
                     throw;
                 }
             }
@@ -223,6 +242,7 @@ namespace Downloader
         InitFile,
         Downloading,
         Success,
-        Error
+        Error,
+        Cancelled
     }
 }
