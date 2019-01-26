@@ -74,7 +74,7 @@
     <Compile Include="DownloadTasksPage.xaml.cs">
       <DependentUpon>DownloadTasksPage.xaml</DependentUpon>
     </Compile>
-    <Compile Include="Download_Util.cs" />
+    <Compile Include="FileDownloader.cs" />
     <Compile Include="NewTask.xaml.cs">
       <DependentUpon>NewTask.xaml</DependentUpon>
     </Compile>

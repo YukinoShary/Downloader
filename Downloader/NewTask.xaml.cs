@@ -33,7 +33,7 @@ namespace Downloader
         {
             if(url.Text!=null&&filename!=null)
             {
-                DownloadTasksPage.dtp.taskAdd(filename.Text, url.Text); 
+                DownloadTasksPage.dtp.TaskAdd(filename.Text, url.Text); 
                 Close();
             }
         }

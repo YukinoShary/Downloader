@@ -23,7 +23,7 @@ namespace Downloader
         public static DownloadTasksPage dtp;
         private int TaskCount = 0;
         private Dictionary<string, string> dataBinding;
-        private Dictionary<string, Download_Util> tasks = new Dictionary<string, Download_Util>();
+        private Dictionary<string, FileDownloader> tasks = new Dictionary<string, FileDownloader>();
 
         public DownloadTasksPage()
         {
@@ -35,7 +35,8 @@ namespace Downloader
 
         private void Add_Click(object sender, RoutedEventArgs e)
         {
-            NewTask nt = new NewTask();
+            NewTask nt = new NewTask() { Owner = Window.GetWindow(this) };
+            nt.WindowStartupLocation = WindowStartupLocation.CenterOwner;
             nt.Show();
         }
 
@@ -146,8 +147,9 @@ namespace Downloader
             {
                 for (int i = 0; i <= copyList.Count-1; i++)
                 {
-                    NewTaskItem(copyList[i].fileName);
-                    tasks.Add(copyList[i].fileName, new Download_Util(copyList[i]));
+                    // TODO
+                    //NewTaskItem(copyList[i].fileName);
+                    //tasks.Add(copyList[i].fileName, new Download_Util(copyList[i]));
                 }
             }            
         }
@@ -157,10 +159,11 @@ namespace Downloader
         /// </summary>
         /// <param name="filename"></param>
         /// <param name="url"></param>
-        public async Task taskAdd(string filename,string url)
+        public void TaskAdd(string filename,string url)
         {
-            tasks.Add(filename, new Download_Util());
-            tasks[filename].DownloadTask(url,filename);
+            var path = System.IO.Path.Combine(Conf.config.storagePath, filename);
+            tasks.Add(filename, new FileDownloader() { SourceUri = new Uri(url), DestFilePath = filename });
+            tasks[filename].Start();
             NewTaskItem(filename);
             dataBinding[filename + "pause_continue"] = "||";
         }
@@ -174,20 +177,17 @@ namespace Downloader
         {
             Button template = (Button)e.Source;
             string name = template.Name;
-            char[] taskname = new char[name.Length - 6];
-            for(int i=0;i<=name.Length-7;i++)
-            {
-                taskname[i] = name[i];
-            }
-            string finalName = new string(taskname);
-            tasks[finalName].PauseTask();
+            string finalName = name.Substring(0, name.Length - 6);
+            // TODO
+            //tasks[finalName].PauseTask();
             tasks.Remove(finalName);
             dataBinding.Remove(finalName + "currentDown");
             dataBinding.Remove(finalName + "pause_continue");
             dataBinding.Remove(finalName + "percent");
             dataBinding.Remove(finalName + "speed");
             taskList.Items.Remove(taskList.FindName(finalName));
-            FileOperating_Util.DeleteFile(finalName);
+            // TODO
+            //FileOperating_Util.DeleteFile(finalName);
         }
 
         public void TaskFinished(string filename)
@@ -216,7 +216,8 @@ namespace Downloader
                 taskname[i] = name[i];
             }
             string finalName = new string(taskname);
-            tasks[finalName].PauseTask();
+            // TODO
+            //tasks[finalName].PauseTask();
             //saveinfo
             dataBinding[name+"pause_continue"] = ">";
         }
@@ -231,7 +232,8 @@ namespace Downloader
                 taskname[i] = name[i];
             }
             string finalName = new string(taskname);
-            tasks[finalName].ContinueTask();
+            // TODO
+            //tasks[finalName].ContinueTask();
             //saveinfo
             dataBinding[name+"pause_continue"] = "||";
         }
@@ -245,7 +247,7 @@ namespace Downloader
         {
             dtp.Dispatcher.Invoke(() =>
             {
-                dataBinding[filename + "currentDone"] = Convert.ToDecimal(progress / 1024 / 1024).ToString("N2") + "/" + totalSize;
+                dataBinding[filename + "currentDone"] = (progress / 1024 / 1024).ToString("N0") + "/" + totalSize;
             });
             
         }
@@ -255,12 +257,12 @@ namespace Downloader
         /// </summary>
         /// <param name="filename"></param>
         /// <param name="percent"></param>
-        public void UpdatePercent(string filename,long percent)
+        public void UpdatePercent(string filename, float percent)
         {
             dtp.Dispatcher.Invoke(() =>
             {
 
-                dataBinding[filename + "percent"] = Convert.ToDecimal(percent * 100).ToString("N2") + "%";
+                dataBinding[filename + "percent"] = (percent * 100).ToString("N2") + "%";
             });
         }
 
@@ -289,18 +291,19 @@ namespace Downloader
 
         public void SaveList()
         {
-            if(TaskCount!=0)
-            {
-                foreach(var i in tasks.Values)
-                {
-                    TaskInfo.Li.Add(i.SaveInfomation());
-                }
-                FileOperating_Util.SaveInfo(TaskInfo.InfoSerialize(), Conf.config.infoPath);
-            }
-            else
-            {
+            // TODO
+            //if (TaskCount!=0)
+            //{
+            //    foreach (var i in tasks.Values)
+            //    {
+            //        TaskInfo.Li.Add(i.SaveInfomation());
+            //    }
+            //    FileOperating_Util.SaveInfo(TaskInfo.InfoSerialize(), Conf.config.infoPath);
+            //}
+            //else
+            //{
                 TaskInfo.Li = null;
-            }
+            //}
         }
 
     }
