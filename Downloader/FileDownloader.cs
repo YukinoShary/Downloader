@@ -18,7 +18,7 @@ namespace Downloader
         public int MinRangeSize = 1 * 1024 * 1024; // 1 MiB
         public Uri SourceUri;
         public string DestFilePath;
-        public HttpClient HttpClient = new HttpClient();
+        public HttpClient HttpClient;
         public CancellationToken CancellationToken;
 
         // Status:
@@ -33,29 +33,86 @@ namespace Downloader
 
         public FileDownloader()
         {
-            HttpClient.DefaultRequestHeaders.Add("User-Agent", UserAgent);
+            HttpClient = CreateHttpClient();
+        }
+
+        HttpClient CreateHttpClient()
+        {
+            var client = new HttpClient();
+            client.DefaultRequestHeaders.Add("User-Agent", UserAgent);
+            return client;
+        }
+
+        public string GetState()
+        {
+            var sb = new StringBuilder();
+            sb.Append(SourceUri).AppendLine();
+            sb.Append(DestFilePath).AppendLine();
+            sb.Append(Downloaded).AppendLine();
+            sb.Append(Length).AppendLine();
+            foreach (var item in Ranges)
+            {
+                sb.Append(item.Offset).Append("/").Append(item.Current).Append("/");
+                sb.Append(item.Offset + item.Length - 1).Append("/").AppendLine();
+            }
+            sb.AppendLine(); // end of ranges
+            return sb.ToString();
+        }
+
+        static readonly char[] seperator = new[] { '/' };
+
+        public void SetState(string state)
+        {
+            var sr = new StringReader(state);
+            SourceUri = new Uri(sr.ReadLine());
+            DestFilePath = sr.ReadLine();
+            sr.ReadLine(); // skip Downloaded, which should be calculated from Ranges
+            Length = long.Parse(sr.ReadLine());
+            string line;
+            while (!string.IsNullOrEmpty(line = sr.ReadLine()))
+            {
+                var splits = line.Split(seperator, 4);
+                var range = new Range { Offset = long.Parse(splits[0]), Current = long.Parse(splits[1]) };
+                range.Length = long.Parse(splits[2]) - range.Offset + 1;
+                Ranges.Add(range);
+                Downloaded += range.Current;
+            }
         }
 
         public async Task Start()
         {
+#if DEBUG
+            DebugPrinter();
+#endif
             State = DownloadState.Requesting;
             try
             {
-                MainWorker = new Worker(this);
-                var resp = await MainWorker.Request(new HttpRequestMessage(HttpMethod.Get, SourceUri));
-                CancellationToken.ThrowIfCancellationRequested();
-                resp.EnsureSuccessStatusCode();
-                RangeSupported = resp.Headers.AcceptRanges.Contains("bytes");
-                Length = GetLength(resp);
-                State = DownloadState.InitFile;
-                InitFile();
-                InitRanges();
-                // keep using the first reponse to download the first range
-                Range firstRange = Ranges[0];
-                firstRange.Worker = MainWorker;
-                firstRange.WorkerTask = MainWorker.DownloadRange(firstRange, resp);
-                StartWorker();
+                HttpResponseMessage firstResponse = null;
+                if (Length == -2)
+                {
+                    MainWorker = new Worker(this);
+                    firstResponse = await MainWorker.Request(new HttpRequestMessage(HttpMethod.Get, SourceUri));
+                    CancellationToken.ThrowIfCancellationRequested();
+                    firstResponse.EnsureSuccessStatusCode();
+                    RangeSupported = firstResponse.Headers.AcceptRanges.Contains("bytes");
+                    Length = GetLength(firstResponse);
+                }
+                if (DestFile == null)
+                {
+                    State = DownloadState.InitFile;
+                    InitFile();
+                }
+                if (Ranges.Count == 0)
+                    InitRanges();
+                if (firstResponse != null)
+                {
+                    // keep using the first reponse to download the first range
+                    Range firstRange = Ranges[0];
+                    firstRange.Worker = MainWorker;
+                    firstRange.WorkerTask = MainWorker.DownloadRange(firstRange, firstResponse);
+                }
                 State = DownloadState.Downloading;
+                StartWorker();
                 await Task.WhenAll(Ranges.Select(x => x.WorkerTask));
                 State = DownloadState.Success;
             }
@@ -74,6 +131,16 @@ namespace Downloader
                     DestFile.Dispose();
                     DestFile = null;
                 }
+            }
+        }
+
+        async void DebugPrinter()
+        {
+            while (true)
+            {
+                Console.WriteLine("-------------- " + DateTime.Now.ToLongTimeString());
+                Console.WriteLine(GetState());
+                await Task.Delay(1000);
             }
         }
 
@@ -151,10 +218,10 @@ namespace Downloader
             public FileDownloader FileDownloader;
             public DownloadState State;
             public int Retries = 0;
-            public int MaxRetries = 3;
+            public int MaxRetries = 10;
 
             CancellationToken CancellationToken => FileDownloader.CancellationToken;
-            HttpClient HttpClient => FileDownloader.HttpClient;
+            HttpClient HttpClient;
 
             public Worker(FileDownloader fileDownloader)
             {
@@ -163,6 +230,8 @@ namespace Downloader
 
             public Task<HttpResponseMessage> Request(HttpRequestMessage httpRequest)
             {
+                if (HttpClient == null)
+                    HttpClient = FileDownloader.CreateHttpClient();
                 State = DownloadState.Requesting;
                 return HttpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, CancellationToken);
             }
@@ -206,6 +275,7 @@ namespace Downloader
                                 if (fs.Position != range.CurrentWithOffset)
                                     fs.Position = range.CurrentWithOffset;
                                 fs.Write(buf, 0, readLen); // no need to use async IO on file (?)
+                                FileDownloader.Downloaded += readLen;
                             }
                             range.Current += readLen; // update Current **after** write to the file
                         }
@@ -223,6 +293,8 @@ namespace Downloader
                         if (Retries++ < MaxRetries)
                         {
                             resp = null;
+                            State = DownloadState.RetryWaiting;
+                            await Task.Delay(Retries * 1000);
                             goto RETRY;
                             // Yes! It's GOTO, to avoid making a long awaiting chain.
                         }
@@ -241,8 +313,50 @@ namespace Downloader
         Requesting,
         InitFile,
         Downloading,
+        RetryWaiting,
         Success,
         Error,
         Cancelled
+    }
+
+    struct StringReader
+    {
+        public StringReader(string str)
+        {
+            this.str = str;
+            sb = new StringBuilder();
+            cur = 0;
+        }
+
+        public string str;
+        public StringBuilder sb;
+        public int cur;
+
+        public string ReadLine()
+        {
+            if (cur >= str.Length) return null;
+            sb.Clear();
+            int start = cur;
+            while (true)
+            {
+                var ch = str[cur++];
+                if (ch == '\r') continue;
+                else if (ch == '\n') return sb.ToString();
+                else sb.Append(ch);
+            }
+        }
+
+        public string ReadUntil(char until)
+        {
+            if (cur >= str.Length) return null;
+            sb.Clear();
+            int start = cur;
+            while (true)
+            {
+                var ch = str[cur++];
+                if (ch == until) return sb.ToString();
+                else sb.Append(ch);
+            }
+        }
     }
 }
