@@ -25,9 +25,24 @@ namespace Downloader
         public Worker MainWorker;
         public DownloadState State;
         public List<Range> Ranges = new List<Range>();
-        public bool RangeSupported;
+        public bool? RangeSupported;
         public long Length = -2; // -2: requesting, -1: unknown (chunked encoding?)
         public long Downloaded;
+        public Task MainTask;
+
+        public int DownloadingThreads
+        {
+            get
+            {
+                int result = 0;
+                for (int i = 0; i < Ranges.Count; i++)
+                {
+                    if (Ranges[i].Worker?.State == DownloadState.Downloading)
+                        result++;
+                }
+                return result;
+            }
+        }
 
         public FileStream DestFile;
 
@@ -79,7 +94,12 @@ namespace Downloader
             }
         }
 
-        public async Task Start()
+        public Task Start()
+        {
+            return MainTask = RealStart();
+        }
+
+        public async Task RealStart()
         {
 #if DEBUG
             DebugPrinter();
@@ -94,7 +114,7 @@ namespace Downloader
                     firstResponse = await MainWorker.Request(new HttpRequestMessage(HttpMethod.Get, SourceUri));
                     CancellationToken.ThrowIfCancellationRequested();
                     firstResponse.EnsureSuccessStatusCode();
-                    RangeSupported = firstResponse.Headers.AcceptRanges.Contains("bytes");
+                    RangeSupported = IsRangeSupported(firstResponse);
                     Length = GetLength(firstResponse);
                 }
                 if (DestFile == null)
@@ -113,8 +133,7 @@ namespace Downloader
                 }
                 State = DownloadState.Downloading;
                 StartWorker();
-                await Task.WhenAll(Ranges.Select(x => x.WorkerTask));
-                State = DownloadState.Success;
+                await Task.WhenAll(Ranges.Select(x => x.WorkerTask).Where(x => x != null));
             }
             catch (Exception e)
             {
@@ -132,6 +151,16 @@ namespace Downloader
                     DestFile = null;
                 }
             }
+            // after Task.WhenAll:
+            if (Length != -1 && Downloaded == Length)
+            {
+                State = DownloadState.Success;
+            }
+            else
+            {
+                State = DownloadState.Error;
+                throw new Exception($"all worker completed but Downloaded({Downloaded}) != Length({Length})");
+            }
         }
 
         async void DebugPrinter()
@@ -146,11 +175,10 @@ namespace Downloader
 
         private void StartWorker()
         {
-            for (int i = 0; i < Ranges.Count; i++)
+            foreach (var range in Ranges)
             {
-                var range = Ranges[i];
                 if (range.Length != -1 && range.Remaining == 0)
-                    return;
+                    continue;
                 // start new worker or restart if failed.
                 if (range.Worker == null)
                     range.Worker = new Worker(this);
@@ -161,14 +189,14 @@ namespace Downloader
 
         private void InitFile()
         {
-            DestFile = File.Open(DestFilePath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite);
+            DestFile = File.Open(DestFilePath, FileMode.OpenOrCreate, FileAccess.Write, FileShare.ReadWrite);
             if (Length > 0)
                 DestFile.SetLength(Length);
         }
 
         private void InitRanges()
         {
-            if (RangeSupported && Length >= MinRangeSize * 2)
+            if (RangeSupported == true && Length >= MinRangeSize * 2)
             {
                 var rangeCount = Math.Min(Length / MinRangeSize, MaxThread);
                 var lenPerRange = Length / rangeCount;
@@ -184,6 +212,11 @@ namespace Downloader
             {
                 Ranges.Add(new Range { Offset = 0, Length = Length });
             }
+        }
+
+        private static bool IsRangeSupported(HttpResponseMessage resp)
+        {
+            return resp.Headers.AcceptRanges.Contains("bytes");
         }
 
         private static long GetLength(HttpResponseMessage resp)
@@ -238,19 +271,30 @@ namespace Downloader
 
             public async Task DownloadRange(Range range, HttpResponseMessage resp = null)
             {
-            RETRY:
+                RETRY:
                 try
                 {
+                    bool unknownLength = range.Length == -1;
                     if (resp == null) // If there is not a response for this range, do a request to get one.
                     {
                         var req = new HttpRequestMessage(HttpMethod.Get, FileDownloader.SourceUri);
-                        req.Headers.Range = new RangeHeaderValue(range.CurrentWithOffset, range.Offset + range.Length - 1);
+                        if (!unknownLength)
+                            req.Headers.Range = new RangeHeaderValue(range.CurrentWithOffset, range.Offset + range.Length - 1);
                         resp = await Request(req);
                         CancellationToken.ThrowIfCancellationRequested();
-                        resp.EnsureSuccessStatusCode();
+                        if (!unknownLength)
+                        {
+                            if (resp.StatusCode != System.Net.HttpStatusCode.PartialContent)
+                            {
+                                throw new Exception("got http status code " + resp.StatusCode + ", expected 206.");
+                            }
+                        }
+                        else
+                        {
+                            resp.EnsureSuccessStatusCode();
+                        }
                     }
 
-                    bool unknownLength = range.Length == -1;
                     using (var stream = await resp.Content.ReadAsStreamAsync())
                     {
                         State = DownloadState.Downloading;
@@ -305,6 +349,47 @@ namespace Downloader
                 }
             }
         }
+
+        struct StringReader
+        {
+            public StringReader(string str)
+            {
+                this.str = str;
+                sb = new StringBuilder();
+                cur = 0;
+            }
+
+            public string str;
+            public StringBuilder sb;
+            public int cur;
+
+            public string ReadLine()
+            {
+                if (cur >= str.Length) return null;
+                sb.Clear();
+                int start = cur;
+                while (true)
+                {
+                    var ch = str[cur++];
+                    if (ch == '\r') continue;
+                    else if (ch == '\n') return sb.ToString();
+                    else sb.Append(ch);
+                }
+            }
+
+            public string ReadUntil(char until)
+            {
+                if (cur >= str.Length) return null;
+                sb.Clear();
+                int start = cur;
+                while (true)
+                {
+                    var ch = str[cur++];
+                    if (ch == until) return sb.ToString();
+                    else sb.Append(ch);
+                }
+            }
+        }
     }
 
     public enum DownloadState
@@ -317,46 +402,5 @@ namespace Downloader
         Success,
         Error,
         Cancelled
-    }
-
-    struct StringReader
-    {
-        public StringReader(string str)
-        {
-            this.str = str;
-            sb = new StringBuilder();
-            cur = 0;
-        }
-
-        public string str;
-        public StringBuilder sb;
-        public int cur;
-
-        public string ReadLine()
-        {
-            if (cur >= str.Length) return null;
-            sb.Clear();
-            int start = cur;
-            while (true)
-            {
-                var ch = str[cur++];
-                if (ch == '\r') continue;
-                else if (ch == '\n') return sb.ToString();
-                else sb.Append(ch);
-            }
-        }
-
-        public string ReadUntil(char until)
-        {
-            if (cur >= str.Length) return null;
-            sb.Clear();
-            int start = cur;
-            while (true)
-            {
-                var ch = str[cur++];
-                if (ch == until) return sb.ToString();
-                else sb.Append(ch);
-            }
-        }
     }
 }
