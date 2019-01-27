@@ -24,7 +24,7 @@ namespace Downloader
         // Status:
         public Worker MainWorker;
         public DownloadState State;
-        public List<Range> Ranges = new List<Range>();
+        public List<Range> Ranges = new List<Range>(); // lock when changing list
         public bool? RangeSupported;
         public long Length = -2; // -2: requesting, -1: unknown (chunked encoding?)
         public long Downloaded;
@@ -65,10 +65,13 @@ namespace Downloader
             sb.Append(DestFilePath).AppendLine();
             sb.Append(Downloaded).AppendLine();
             sb.Append(Length).AppendLine();
-            foreach (var item in Ranges)
+            lock (Ranges)
             {
-                sb.Append(item.Offset).Append("/").Append(item.Current).Append("/");
-                sb.Append(item.Offset + item.Length - 1).Append("/").AppendLine();
+                foreach (var item in Ranges)
+                {
+                    sb.Append(item.Offset).Append("/").Append(item.Current).Append("/");
+                    sb.Append(item.Offset + item.Length - 1).Append("/").AppendLine();
+                }
             }
             sb.AppendLine(); // end of ranges
             return sb.ToString();
@@ -78,7 +81,7 @@ namespace Downloader
 
         public void SetState(string state)
         {
-            var sr = new StringReader(state);
+            var sr = new MyStringReader(state);
             SourceUri = new Uri(sr.ReadLine());
             DestFilePath = sr.ReadLine();
             sr.ReadLine(); // skip Downloaded, which should be calculated from Ranges
@@ -196,21 +199,24 @@ namespace Downloader
 
         private void InitRanges()
         {
-            if (RangeSupported == true && Length >= MinRangeSize * 2)
+            lock (Ranges)
             {
-                var rangeCount = Math.Min(Length / MinRangeSize, MaxThread);
-                var lenPerRange = Length / rangeCount;
-                long cur = 0;
-                for (int i = 0; i < rangeCount - 1; i++)
+                if (RangeSupported == true && Length >= MinRangeSize * 2)
                 {
-                    Ranges.Add(new Range { Offset = cur, Length = lenPerRange });
-                    cur += lenPerRange;
+                    var rangeCount = Math.Min(Length / MinRangeSize, MaxThread);
+                    var lenPerRange = Length / rangeCount;
+                    long cur = 0;
+                    for (int i = 0; i < rangeCount - 1; i++)
+                    {
+                        Ranges.Add(new Range { Offset = cur, Length = lenPerRange });
+                        cur += lenPerRange;
+                    }
+                    Ranges.Add(new Range { Offset = cur, Length = Length - cur });
                 }
-                Ranges.Add(new Range { Offset = cur, Length = Length - cur });
-            }
-            else
-            {
-                Ranges.Add(new Range { Offset = 0, Length = Length });
+                else
+                {
+                    Ranges.Add(new Range { Offset = 0, Length = Length });
+                }
             }
         }
 
@@ -227,6 +233,19 @@ namespace Downloader
             if (lenStr == null)
                 return -1;
             return long.Parse(lenStr);
+        }
+
+        long lastCP_Downloaded = -1;
+
+        public string CheckAutoSave()
+        {
+            if (Length == -2)
+                return null;
+            var curDl = Downloaded;
+            if (curDl == lastCP_Downloaded)
+                return null;
+            lastCP_Downloaded = curDl;
+            return GetState();
         }
 
         public class Range
@@ -350,9 +369,9 @@ namespace Downloader
             }
         }
 
-        struct StringReader
+        struct MyStringReader
         {
-            public StringReader(string str)
+            public MyStringReader(string str)
             {
                 this.str = str;
                 sb = new StringBuilder();

@@ -74,7 +74,6 @@
     <Compile Include="DownloadTasksPage.xaml.cs">
       <DependentUpon>DownloadTasksPage.xaml</DependentUpon>
     </Compile>
-    <Compile Include="FileDownloader.cs" />
     <Compile Include="NewTask.xaml.cs">
       <DependentUpon>NewTask.xaml</DependentUpon>
     </Compile>
@@ -154,5 +153,6 @@
       <Install>false</Install>
     </BootstrapperPackage>
   </ItemGroup>
+  <Import Project="..\SharedProject\SharedProject.projitems" Label="Shared" />
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>
