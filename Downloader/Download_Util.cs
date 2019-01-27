@@ -76,7 +76,8 @@ namespace Downloader
             try
             {
                 client.DefaultRequestHeaders.Add("Accept-Encoding", AcceptEncoding);
-                HttpResponseMessage response = await client.GetAsync(downloadUrl);
+                HttpRequestMessage rm = new HttpRequestMessage(HttpMethod.Get,downloadUrl);
+                HttpResponseMessage response = await client.SendAsync(rm, HttpCompletionOption.ResponseHeadersRead);
                 response.EnsureSuccessStatusCode();
                 fileName = filename;
 
@@ -84,6 +85,7 @@ namespace Downloader
                 //Debug.Write(testName);
 
                 fileSize = response.Content.Headers.ContentLength.Value;
+
             }
             catch(Exception e)
             {
@@ -92,7 +94,7 @@ namespace Downloader
 
             if(fileSize < cacheSize)//当文件太小时，分配较少线程并把缓存设置为最小
             {
-                thread = 4;
+                thread = 2;
                 cacheSize = 64 * 1024 * 1024;
             }
             blockSize = fileSize / thread;       //计算分块大小
@@ -186,17 +188,17 @@ namespace Downloader
             //设置请求头
             client.DefaultRequestHeaders.Add("User-Agent", @UserAgent);
             client.DefaultRequestHeaders.Add("Range", range);
-
-            Stream stream = await client.GetStreamAsync(downloadUrl);
-
             long rangeNum = (firstPosition + blockSize - cutPosition[taskNum]) / rangeSize - 1
-                + ((firstPosition + blockSize - cutPosition[taskNum]) % rangeSize > 0 ? 1 : 0)
-                + totalRange / thread * taskNum;
-            //rangeNum的计算为（定位该range在该block中的位置，即初始位置加上blockSize再减去该块末分段位置）
-            //除以每个进度块大小,最后加上之前的range数量
+                    + ((firstPosition + blockSize - cutPosition[taskNum]) % rangeSize > 0 ? 1 : 0)
+                    + totalRange / thread * taskNum;
+            /*rangeNum的计算为（定位该range在该block中的位置，即初始位置加上blockSize再减去该块末分段位置）
+            除以每个进度块大小,最后加上之前的range数量*/
 
-            //缓存写入硬盘
-            await Task.Run(() => { FileOperating_Util.SaveFile(fileName, stream, firstPosition, rangeNum); });
+            using (Stream stream = await client.GetStreamAsync(downloadUrl))
+            {
+                //缓存写入硬盘
+                FileOperating_Util.SaveFile(fileName, stream, firstPosition, rangeNum);
+            }
 
             //当线程任务未超过block范围，继续下一个Range任务
             if (firstPosition + rangeSize < cutPosition[taskNum])

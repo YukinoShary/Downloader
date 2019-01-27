@@ -17,10 +17,10 @@ namespace Downloader
         //https://blogs.msdn.microsoft.com/oldnewthing/20150710-00/?p=45171
         //https://msdn.microsoft.com/zh-cn/library/aa686045.aspx
         [DllImport("Kernel32.dll", EntryPoint ="SetEndOfFile")]
-        private static extern bool SetEndOfFile(IntPtr hFile);
-       
+        private static extern bool SetEndOfFile(IntPtr hFile);   
 
         public static string path;                                  //获取设置的下载路径
+        private static Dictionary<string,FileStream> fs = new Dictionary<string,FileStream>();
         private static Object locker = new Object();                  //建立进程锁对象
         private static Dictionary<string, long[]> progress=new Dictionary<string, long[]>();    //初始化静态任务进度表
 
@@ -81,39 +81,33 @@ namespace Downloader
         /// /// <param name="blockRanges">每个block中的range数量</param>
         public static void CreateFile(string fileName,long size,long Ranges)
         {
-            lock(locker)
+            if (File.Exists(path + fileName))//当不为续写模式但是文件已存在,由用户判断后续操作
             {
-                if (File.Exists(path + fileName))//当不为续写模式但是文件已存在,由用户判断后续操作
+                //主线程invoke           
+                MessageBoxResult result = MessageBox.Show("该目录下已存在该文件，是否重新下载？", "Warning", MessageBoxButton.YesNo);
+                if (result == MessageBoxResult.Yes)
+                    CreateFile(fileName + "(new)", size, Ranges);
+                else if (result == MessageBoxResult.No)
+                    return;
+            }
+            else
+            {
+                progress.Add(fileName, new long[Ranges]);//建立新的下载进度,每一个元素表示各个range的长度
+                try
                 {
-                    //主线程invoke           
-                    MessageBoxResult result = MessageBox.Show("该目录下已存在该文件，是否重新下载？", "Warning", MessageBoxButton.YesNo);
-                    if (result == MessageBoxResult.Yes)
-                        CreateFile(fileName + "(new)", size, Ranges);
-                    else if (result == MessageBoxResult.No)
+                    fs.Add(fileName, new FileStream(path + fileName, FileMode.Create, FileAccess.Write));
+                    //为下载内容设置硬盘空间 
+                    if (SetEndOfFile(fs[fileName].Handle))
                         return;
+                    else
+                        throw new IOException();
                 }
-                else
+                catch (Exception e)
                 {
-                    progress.Add(fileName, new long[Ranges]);//建立新的下载进度,每一个元素表示各个range的长度
-                    try
-                    {
-                        using (FileStream fs = new FileStream(path + fileName, FileMode.Create, FileAccess.Write))
-                        {
-                            
-                            //为下载内容设置硬盘空间 
-                            if (SetEndOfFile(fs.Handle))
-                                return;
-                            else
-                                throw new IOException();
-                        }
-                    }
-                    catch(Exception e)
-                    {
-                        MainWindow.mw.Dispatcher.Invoke(() => { MessageBox.Show(e.Message); }); 
-                    }
+                    MainWindow.mw.Dispatcher.Invoke(() => { MessageBox.Show(e.Message); });
                 }
             }
-            
+
         }
 
         /// <summary>
@@ -125,41 +119,48 @@ namespace Downloader
         /// <returns></returns>
         public static bool SaveFile(string fileName,Stream result,long position,long rangeNum)
         {
-            lock(locker)
+            using (FileStream fs = new FileStream(path + fileName, FileMode.Open, FileAccess.Write, FileShare.ReadWrite))
             {
-                using (FileStream fs = new FileStream(path + fileName, FileMode.Open, FileAccess.Write, FileShare.ReadWrite))
+                
+            }
+            try
+            {
+                byte[] buf = new byte[4096];
+                long count = 0;
+                long total = result.Length / 4096;
+                while (count <= total)
                 {
-                    try
+                    result.Read(buf, 0, buf.Length);
+                    lock (locker)
                     {
-                        fs.Seek(position, SeekOrigin.Begin);//在文件流中查找range位置
-                        byte[] buf = new byte[4096];
-                        long count = 0;
-                        long total = result.Length / 4096;
-                        while (count <= total)
-                        {
-                            result.Read(buf, 0, buf.Length);
-                            fs.Write(buf, 0, buf.Length);
-                            count += 1;
-                            progress[fileName][rangeNum] += 4096;//记录存储进度
-                        }
-                        long remainder = result.Length % 4096;
-                        //剩余内容写入
-                        if (remainder != 0)
-                        {
-                            byte[] remainBuf = new byte[remainder];
-                            result.Read(remainBuf, 0, remainBuf.Length);
-                            fs.Write(remainBuf, 0, remainBuf.Length);
-                            progress[fileName][rangeNum] += remainder;
-                        }
-                        return true;
-                    }
-                    catch (Exception)
-                    {
-                        return false;
+                        fs[fileName].Seek(position, SeekOrigin.Begin);//在文件流中查找range位置
+                        fs[fileName].Write(buf, 0, buf.Length);
+                        count += 1;
+                        progress[fileName][rangeNum] += 4096;//记录存储进度
+                        position += buf.Length;
                     }
                 }
+                long remainder = result.Length % 4096;
+                //剩余内容写入
+                if (remainder != 0)
+                {
+                    byte[] remainBuf = new byte[remainder];
+                    result.Read(remainBuf, 0, remainBuf.Length);
+                    lock (locker)
+                    {
+                        fs[fileName].Seek(position, SeekOrigin.Begin);
+                        fs[fileName].Write(remainBuf, 0, remainBuf.Length);
+                        progress[fileName][rangeNum] += remainder;
+                        position += remainder;
+                    }
+
+                }
+                return true;
             }
-            
+            catch (Exception)
+            {
+                return false;
+            }
         }
 
         /// <summary>
