@@ -30,7 +30,7 @@ namespace DownloaderWinForm
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, ex.Message, "Error creating task", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                labelError.Text = "Error: " + ex.Message;
                 return;
             }
             ResultCallback?.Invoke(this);

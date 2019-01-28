@@ -20,6 +20,7 @@ namespace Downloader
         public string DestFilePath;
         public HttpClient HttpClient;
         public CancellationToken CancellationToken;
+        public int MaxErrors = 30;
 
         // Status:
         public Worker MainWorker;
@@ -29,6 +30,9 @@ namespace Downloader
         public long Length = -2; // -2: requesting, -1: unknown (chunked encoding?)
         public long Downloaded;
         public Task MainTask;
+        public int Errors;
+        DateTime LastErrorTime = DateTime.MinValue;
+        public bool IsRunning => MainTask?.IsCompleted == false;
 
         public int DownloadingThreads
         {
@@ -95,6 +99,8 @@ namespace Downloader
                 Ranges.Add(range);
                 Downloaded += range.Current;
             }
+            if (Downloaded == Length)
+                State = DownloadState.Success;
         }
 
         public Task Start()
@@ -104,6 +110,8 @@ namespace Downloader
 
         public async Task RealStart()
         {
+            if (State == DownloadState.Success)
+                return;
 #if DEBUG
             DebugPrinter();
 #endif
@@ -248,6 +256,20 @@ namespace Downloader
             return GetState();
         }
 
+        int OnError(Exception e, Worker worker)
+        {
+            var now = DateTime.Now;
+            int wait;
+            if (Interlocked.Increment(ref Errors) > MaxErrors)
+                wait = -1;
+            else if (LastErrorTime == DateTime.MinValue || now - LastErrorTime > TimeSpan.FromSeconds(1))
+                wait = 1000;
+            else
+                wait = 5000;
+            LastErrorTime = now;
+            return wait;
+        }
+
         public class Range
         {
             public long Offset;
@@ -261,7 +283,7 @@ namespace Downloader
 
             public override string ToString()
             {
-                return $"{{Range offset={Offset} len={Length} cur={Current} state={Worker?.State} retries={Worker?.Retries}}}";
+                return $"{{Range offset={Offset} len={Length} cur={Current} state={Worker?.State} errors={Worker?.Errors}}}";
             }
         }
 
@@ -269,8 +291,8 @@ namespace Downloader
         {
             public FileDownloader FileDownloader;
             public DownloadState State;
-            public int Retries = 0;
-            public int MaxRetries = 10;
+            public Range WorkingRange;
+            public int Errors;
 
             CancellationToken CancellationToken => FileDownloader.CancellationToken;
             HttpClient HttpClient;
@@ -290,6 +312,7 @@ namespace Downloader
 
             public async Task DownloadRange(Range range, HttpResponseMessage resp = null)
             {
+                WorkingRange = range;
                 RETRY:
                 try
                 {
@@ -353,11 +376,14 @@ namespace Downloader
                     }
                     else
                     {
-                        if (Retries++ < MaxRetries)
+                        Errors++;
+                        var waitAndRetry = FileDownloader.OnError(e, this);
+                        if (waitAndRetry >= 0)
                         {
                             resp = null;
                             State = DownloadState.RetryWaiting;
-                            await Task.Delay(Retries * 1000);
+                            if (waitAndRetry > 0)
+                                await Task.Delay(waitAndRetry);
                             goto RETRY;
                             // Yes! It's GOTO, to avoid making a long awaiting chain.
                         }

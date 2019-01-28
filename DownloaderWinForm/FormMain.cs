@@ -14,89 +14,106 @@ namespace DownloaderWinForm
 {
     public partial class FormMain : Form
     {
-        const string TaskListFile = "tasks.conf";
-
-        static readonly UTF8Encoding UTF8WithoutBOM = new UTF8Encoding(false);
-
         Timer timer;
-
-        List<DownloadItem> tasks = new List<DownloadItem>();
+        DownloadManager dm;
 
         public FormMain()
         {
             InitializeComponent();
+            InitContextMenu();
+        }
+
+        Action updateMenuState;
+
+        private void InitContextMenu()
+        {
+            var menu = new ContextMenuStrip();
+            ToolStripItem pause = menu.Items.Add("&Pause Selected");
+            pause.Click += (s, e) =>
+            {
+                foreach (ListViewItem item in listView.SelectedItems)
+                {
+                    var task = (DownloadItem)item.Tag;
+                    task.Pause();
+                }
+            };
+            ToolStripItem start = menu.Items.Add("&Start Selected");
+            start.Click += (s, e) =>
+            {
+                foreach (ListViewItem item in listView.SelectedItems)
+                {
+                    var task = (DownloadItem)item.Tag;
+                    if (!task.FileDownloader.IsRunning)
+                        task.Start();
+                }
+            };
+            menu.Items.Add(new ToolStripSeparator());
+            ToolStripItem remove = menu.Items.Add("&Remove Selected");
+            remove.Click += (s, e) =>
+            {
+                foreach (ListViewItem item in listView.SelectedItems)
+                {
+                    var task = (DownloadItem)item.Tag;
+                    dm.RemoveItem(task);
+                }
+                dm.SaveTaskList();
+            };
+            listView.ContextMenuStrip = menu;
+            updateMenuState = () =>
+            {
+                pause.Enabled = start.Enabled = remove.Enabled = false;
+                if (listView.SelectedItems.Count > 0)
+                {
+                    remove.Enabled = true;
+                    foreach (ListViewItem item in listView.SelectedItems)
+                    {
+                        var task = (DownloadItem)item.Tag;
+                        if (task.FileDownloader.IsRunning)
+                            pause.Enabled = true;
+                        else
+                            start.Enabled = true;
+                    }
+                }
+            };
+            listView.SelectedIndexChanged += (s, e) => updateMenuState();
         }
 
         protected override void OnLoad(EventArgs e)
         {
             base.OnLoad(e);
-            timer = new Timer();
-            timer.Interval = 1000;
-            timer.Enabled = true;
+            dm = new DownloadManager() { listView = this.listView };
+            dm.ReadTaskList();
+
+            timer = new Timer { Interval = 1000, Enabled = true };
             timer.Tick += Timer_Tick;
-            ReadTaskList();
         }
+
+        int timerTicks;
 
         private void Timer_Tick(object sender, EventArgs e)
         {
-            foreach (var item in tasks)
+            if (++timerTicks == 3)
+            {
+                timerTicks = 0;
+                dm.CheckPoint();
+            }
+            foreach (var item in dm.tasks)
             {
                 item.UpdateView();
-                var state = item.FileDownloader.CheckAutoSave();
-                if (state != null)
-                {
-                    File.WriteAllText(item.StateFilePath, state, UTF8WithoutBOM);
-                }
             }
+            updateMenuState();
         }
 
         private void newToolStripMenuItem_Click(object sender, EventArgs e)
         {
             var formTask = new FormTask();
-            formTask.Show(this);
             formTask.ResultCallback += (x) =>
             {
                 var item = x.Item;
-                AddItem(item);
-                SaveTaskList();
+                dm.AddItem(item);
+                dm.SaveTaskList();
             };
-        }
-
-        private void AddItem(DownloadItem item)
-        {
-            item.TryRestoreState();
-            tasks.Add(item);
-            item.InitView(listView);
-            item.UpdateView();
-            Task.Run(() => item.FileDownloader.Start());
-        }
-
-        private void SaveTaskList()
-        {
-            var sb = new StringBuilder();
-            foreach (var item in tasks)
-            {
-                sb.AppendLine(item.Source);
-                sb.AppendLine(item.DestFilePath);
-                sb.AppendLine();
-            }
-            File.WriteAllText(TaskListFile, sb.ToString(), UTF8WithoutBOM);
-        }
-
-        private void ReadTaskList()
-        {
-            if (!File.Exists(TaskListFile))
-                return;
-            var text = File.ReadAllText(TaskListFile, Encoding.UTF8);
-            var sr = new StringReader(text);
-            string line;
-            while ((line = sr.ReadLine()) != null)
-            {
-                var source = line;
-                var dest = sr.ReadLine();
-                AddItem(new DownloadItem(source, dest));
-                while (sr.ReadLine().Length > 0) { }
-            }
+            formTask.ShowDialog(this);
         }
     }
 }
