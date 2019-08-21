@@ -31,9 +31,8 @@ namespace Downloader
 
         private void Confirm_Click(object sender, RoutedEventArgs e)
         {
-            if(url.Text!=null&&filename!=null)
+            if(url.Text!=null)
             {
-                DownloadTasksPage.dtp.taskAdd(filename.Text, url.Text); 
                 Close();
             }
         }

@@ -26,8 +26,8 @@ namespace Downloader
             InitializeComponent();
             mw = this;
             Conf.getConf();
-            FileOperating_Util.path = Conf.config.storagePath;
-            TaskInfo.getTaskInfo();            
+            FileOperating.path = Conf.config.storagePath;
+            TaskList.getTaskInfo();          
             DownloadTasksPage.dtp = new DownloadTasksPage();
         }
 
@@ -53,10 +53,8 @@ namespace Downloader
 
         private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
         {
-            Wait w = new Wait();
-            w.Show();
-            TaskInfo.Li.Clear();
-            DownloadTasksPage.dtp.SaveList();
+            TaskList.Li.Clear();
+            DownloadTasksPage.dtp.Exit();
             Application.Current.MainWindow.Close();
         }
     }

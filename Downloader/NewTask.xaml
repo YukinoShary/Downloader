@@ -8,13 +8,9 @@
         Title="NewTask" Height="200" Width="400">
     <Grid>
         <StackPanel>
-            <StackPanel Orientation="Horizontal" Margin="0,25,0,0">
-                <TextBlock Text="文件名:" Margin="20,0,0,0"/>
-                <TextBox Margin="20,0,0,0" Width="250" Height="30" Name="filename"/>
-            </StackPanel>
             <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
                 <TextBlock Text="下载地址:" Margin="20,0,0,0"/>
-                <TextBox Margin="10,0,0,0" Width="250" Height="30" Name="url"/>
+                <TextBox Margin="10,0,0,0" Width="250" Height="80" Name="url"/>
             </StackPanel>
             <StackPanel Orientation="Horizontal">
                 <Button Name="confirm" Margin="80,20,0,0" Width="70" Height="40" Content="确认" Click="Confirm_Click"/>

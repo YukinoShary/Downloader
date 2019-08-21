@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -11,7 +12,7 @@ using System.Windows;
 
 namespace Downloader
 {
-    public class FileOperating_Util
+    public class FileOperating
     {
         //https://docs.microsoft.com/en-us/windows/desktop/api/fileapi/nf-fileapi-setendoffile
         //https://blogs.msdn.microsoft.com/oldnewthing/20150710-00/?p=45171
@@ -22,63 +23,15 @@ namespace Downloader
         public static string path;                                  //获取设置的下载路径
         private static Dictionary<string,FileStream> fs = new Dictionary<string,FileStream>();
         private static Object locker = new Object();                  //建立进程锁对象
-        private static Dictionary<string, long[]> progress=new Dictionary<string, long[]>();    //初始化静态任务进度表
-
-        public FileOperating_Util()
-        {
-            progress = ProgressDeserialize(LoadInfo(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments) + "progress.prg"));
-        }
-
-        public static Stream ProgressSerialize()
-        {
-            MemoryStream ms = new MemoryStream();
-            IFormatter formatter = new BinaryFormatter();
-            formatter.Serialize(ms, progress);
-            return ms;
-        }
-
-        private static Dictionary<string, long[]> ProgressDeserialize(byte[] b)
-        {
-            using (MemoryStream ms = new MemoryStream(b))
-            {
-                IFormatter formatter = new BinaryFormatter();
-                return (Dictionary<string, long[]>)formatter.Deserialize(ms);
-            }
-        }
-
-        /// <summary>
-        /// 将信息文件存储在本地
-        /// </summary>
-        /// <param name="str"></param>
-        public static void SaveInfo(Stream sourceStream,string path)
-        {
-            using (FileStream fileStream = new FileStream(path,FileMode.Create,FileAccess.Write))
-            {
-                sourceStream.CopyTo(fileStream);
-                sourceStream.Dispose();
-            }
-        }
-
-        /// <summary>
-        /// 读取磁盘中的信息文件
-        /// </summary>
-        /// <returns>返回Conf类型文件</returns>
-        public static byte[] LoadInfo(string path)
-        {
-            using (FileStream fileStream = new FileStream(path,FileMode.Open,FileAccess.Read))
-            {
-                byte[] bytes = new byte[fileStream.Length];
-                fileStream.Read(bytes, 0, bytes.Length);
-                return bytes;
-            }
-        }
+        private static Dictionary<string, long[]> progress = new Dictionary<string, long[]>();   //初始化静态任务进度表
+        
 
         /// <summary>
         /// 创建新文件对象，为下载内容设置硬盘空间
         /// </summary>
         /// <param name="fileName">文件名</param>
         /// <param name="size">文件总大小</param>
-        /// /// <param name="blockRanges">每个block中的range数量</param>
+        /// /// <param name="Ranges">每个block中的range数量</param>
         public static void CreateFile(string fileName,long size,long Ranges)
         {
             if (File.Exists(path + fileName))//当不为续写模式但是文件已存在,由用户判断后续操作
@@ -96,6 +49,7 @@ namespace Downloader
                 try
                 {
                     fs.Add(fileName, new FileStream(path + fileName, FileMode.Create, FileAccess.Write));
+                    fs[fileName].SetLength(size);
                     //为下载内容设置硬盘空间 
                     if (SetEndOfFile(fs[fileName].Handle))
                         return;
@@ -121,46 +75,45 @@ namespace Downloader
         {
             using (FileStream fs = new FileStream(path + fileName, FileMode.Open, FileAccess.Write, FileShare.ReadWrite))
             {
-                
-            }
-            try
-            {
-                byte[] buf = new byte[4096];
-                long count = 0;
-                long total = result.Length / 4096;
-                while (count <= total)
+                try
                 {
-                    result.Read(buf, 0, buf.Length);
-                    lock (locker)
+                    byte[] buf = new byte[4096];
+                    long count = 0;
+                    long total = result.Length / 4096;
+                    while (count <= total)
                     {
-                        fs[fileName].Seek(position, SeekOrigin.Begin);//在文件流中查找range位置
-                        fs[fileName].Write(buf, 0, buf.Length);
-                        count += 1;
-                        progress[fileName][rangeNum] += 4096;//记录存储进度
-                        position += buf.Length;
+                        result.Read(buf, 0, buf.Length);
+                        lock (locker)
+                        {
+                            fs.Seek(position, SeekOrigin.Begin);//在文件流中查找range位置
+                            fs.Write(buf, 0, buf.Length);
+                            count += 1;
+                            progress[fileName][rangeNum] += 4096;//记录存储进度
+                            position += buf.Length;
+                        }
                     }
-                }
-                long remainder = result.Length % 4096;
-                //剩余内容写入
-                if (remainder != 0)
-                {
-                    byte[] remainBuf = new byte[remainder];
-                    result.Read(remainBuf, 0, remainBuf.Length);
-                    lock (locker)
+                    long remainder = result.Length % 4096;
+                    //剩余内容写入
+                    if (remainder != 0)
                     {
-                        fs[fileName].Seek(position, SeekOrigin.Begin);
-                        fs[fileName].Write(remainBuf, 0, remainBuf.Length);
-                        progress[fileName][rangeNum] += remainder;
-                        position += remainder;
-                    }
+                        byte[] remainBuf = new byte[remainder];
+                        result.Read(remainBuf, 0, remainBuf.Length);
+                        lock (locker)
+                        {
+                            fs.Seek(position, SeekOrigin.Begin);
+                            fs.Write(remainBuf, 0, remainBuf.Length);
+                            progress[fileName][rangeNum] += remainder;
+                            position += remainder;
+                        }
 
+                    }
+                    return true;
                 }
-                return true;
-            }
-            catch (Exception)
-            {
-                return false;
-            }
+                catch (Exception)
+                {
+                    return false;
+                }
+            }    
         }
 
         /// <summary>
@@ -188,11 +141,37 @@ namespace Downloader
         /// <summary>
         /// 返回单个任务的分块进度条
         /// </summary>
-        /// <param name="filename"></param>
+        /// <param name="fileName"></param>
         /// <returns></returns>
-        public static long[] getProgress(string filename)
+        public static long[] GetProgress(string fileName)
         {
-            return progress[filename];
+            return progress[fileName];
+        }
+
+        public static void SetProgress(Dictionary<string,long[]>p)
+        {
+            progress = p;
+        }
+
+        public static void StatusUpdate(string fileName)
+        {
+            if (progress[fileName].Last() != progress[fileName][0]
+                || progress[fileName].Last() 
+                + progress[fileName][0] * (progress[fileName].Count() - 1)
+                == fs[fileName].Length) //若存储进度记录的大小已等于该文件流大小
+            {
+                fs.Remove(fileName);
+                progress.Remove(fileName);
+            }
+            else
+            {
+                Debug.WriteLine("文件写入未完成");
+            }
+        }
+
+        public static void SaveProgress()
+        {
+
         }
     }
 }

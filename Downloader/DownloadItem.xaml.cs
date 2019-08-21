@@ -10,18 +10,21 @@ using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Navigation;
 using System.Windows.Shapes;
 
 namespace Downloader
 {
     /// <summary>
-    /// Wait.xaml 的交互逻辑
+    /// DownloadItem.xaml 的交互逻辑
     /// </summary>
-    public partial class Wait : Window
+    public partial class DownloadItem : Page
     {
-        public Wait()
+        public DownloadItem(string filename)
         {
             InitializeComponent();
+            fileName.Text = filename;
         }
+
     }
 }
